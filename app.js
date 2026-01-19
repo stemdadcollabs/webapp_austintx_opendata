@@ -9,6 +9,8 @@ const refreshButton = document.getElementById("refreshButton");
 const statusEl = document.getElementById("status");
 const statsEl = document.getElementById("stats");
 const tableWrapper = document.getElementById("tableWrapper");
+const chartSection = document.getElementById("chartSection");
+const chartWrapper = document.getElementById("chartWrapper");
 
 const VIEW_MODES = {
   ROWS: "rows",
@@ -87,6 +89,9 @@ function updateViewMode() {
   const monthly = isMonthlyCompare();
   limitInput.disabled = monthly;
   searchInput.disabled = monthly;
+  if (chartSection) {
+    chartSection.hidden = !monthly;
+  }
 }
 
 function buildRowQuery() {
@@ -193,6 +198,13 @@ function formatLabel(value) {
     .replace(/\b\w/g, (match) => match.toUpperCase());
 }
 
+function formatNumber(value) {
+  if (!Number.isFinite(value)) {
+    return String(value);
+  }
+  return value.toLocaleString();
+}
+
 function parseMonthlyRow(row) {
   if (!row) {
     return null;
@@ -259,6 +271,15 @@ function buildMonthlyComparison(rows) {
 
   const total2024 = countsByYear[2024].reduce((sum, value) => sum + value, 0);
   const total2025 = countsByYear[2025].reduce((sum, value) => sum + value, 0);
+  const maxCount = Math.max(...countsByYear[2024], ...countsByYear[2025], 0);
+
+  const totalsRow = {
+    month: "Total",
+    count2024: total2024,
+    count2025: total2025,
+    change: total2025 - total2024,
+    isTotal: true,
+  };
 
   return {
     columns: [
@@ -267,13 +288,74 @@ function buildMonthlyComparison(rows) {
       { label: "2025", key: "count2025" },
       { label: "Change", key: "change" },
     ],
-    rows: comparisonRows,
+    rows: [...comparisonRows, totalsRow],
+    maxCount,
     totals: {
       total2024,
       total2025,
       change: total2025 - total2024,
     },
   };
+}
+
+function buildChartSeries(label, value, maxValue, barClass) {
+  const series = document.createElement("div");
+  series.className = "chart-series";
+
+  const labelEl = document.createElement("span");
+  labelEl.className = "chart-series-label";
+  labelEl.textContent = label;
+
+  const track = document.createElement("div");
+  track.className = "chart-track";
+
+  const bar = document.createElement("div");
+  bar.className = `chart-bar ${barClass}`;
+  const width = maxValue > 0 ? (value / maxValue) * 100 : 0;
+  bar.style.width = `${width}%`;
+  track.appendChild(bar);
+
+  const valueEl = document.createElement("span");
+  valueEl.className = "chart-value";
+  valueEl.textContent = formatNumber(value);
+
+  series.append(labelEl, track, valueEl);
+  return series;
+}
+
+function renderMonthlyChart(comparison) {
+  if (!chartWrapper) {
+    return;
+  }
+
+  chartWrapper.innerHTML = "";
+  const rows = comparison.rows.filter((row) => !(row && row.isTotal));
+  if (!rows.length || comparison.maxCount <= 0) {
+    chartWrapper.innerHTML = '<div class="empty-state">No chart data for this range.</div>';
+    return;
+  }
+
+  const grid = document.createElement("div");
+  grid.className = "chart-grid";
+
+  rows.forEach((row) => {
+    const rowEl = document.createElement("div");
+    rowEl.className = "chart-row";
+
+    const label = document.createElement("div");
+    label.className = "chart-label";
+    label.textContent = row.month;
+
+    const bars = document.createElement("div");
+    bars.className = "chart-bars";
+    bars.appendChild(buildChartSeries("2024", row.count2024, comparison.maxCount, "chart-bar-2024"));
+    bars.appendChild(buildChartSeries("2025", row.count2025, comparison.maxCount, "chart-bar-2025"));
+
+    rowEl.append(label, bars);
+    grid.appendChild(rowEl);
+  });
+
+  chartWrapper.appendChild(grid);
 }
 
 function getCellValue(row, column) {
@@ -343,6 +425,9 @@ function renderTable(columns, rows) {
   const tbody = document.createElement("tbody");
   rows.forEach((row) => {
     const tr = document.createElement("tr");
+    if (row && typeof row === "object" && row.isTotal) {
+      tr.classList.add("total-row");
+    }
     columns.forEach((column) => {
       const td = document.createElement("td");
       const value = formatCell(getCellValue(row, column));
@@ -413,6 +498,7 @@ async function loadData() {
 
       setStatus("Monthly comparison loaded.");
       renderTable(comparison.columns, comparison.rows);
+      renderMonthlyChart(comparison);
       statsEl.textContent = `2024 total: ${comparison.totals.total2024} | 2025 total: ${comparison.totals.total2025} | Change: ${comparison.totals.change}`;
       return;
     }
