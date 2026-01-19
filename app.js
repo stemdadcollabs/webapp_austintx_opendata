@@ -28,6 +28,20 @@ const DATASETS = [
     compareStart: "2024-01-01",
     compareEnd: "2026-01-01",
   },
+  {
+    id: "chicago",
+    label: "Chicago",
+    city: "Chicago",
+    datasetId: "ijzp-q8t2",
+    datasetName: "Crimes - 2001 to Present",
+    endpoint: "https://data.cityofchicago.org/api/v3/views/ijzp-q8t2/query.json",
+    description:
+      "Crimes - 2001 to Present dataset from Chicago Data Portal with live rows and monthly comparisons.",
+    compareDescription: "2024 vs 2025 incident counts from the Date field.",
+    dateField: "date",
+    compareStart: "2024-01-01",
+    compareEnd: "2026-01-01",
+  },
 ];
 
 const ACTIVE_DATASET_KEY = "activeOpenDataDataset";
@@ -35,6 +49,7 @@ const TOKEN_STORAGE_PREFIX = "openDataToken:";
 const LEGACY_TOKEN_KEYS = {
   austin: "austinOpenDataToken",
   dallas: "dallasOpenDataToken",
+  chicago: "chicagoOpenDataToken",
 };
 
 const limitInput = document.getElementById("limitInput");
@@ -88,6 +103,7 @@ const state = {
 const LEGACY_FALLBACK_TOKENS = {
   austin: typeof window.AUSTIN_APP_TOKEN === "string" ? window.AUSTIN_APP_TOKEN.trim() : "",
   dallas: typeof window.DALLAS_APP_TOKEN === "string" ? window.DALLAS_APP_TOKEN.trim() : "",
+  chicago: typeof window.CHICAGO_APP_TOKEN === "string" ? window.CHICAGO_APP_TOKEN.trim() : "",
 };
 
 const FALLBACK_TOKENS =
