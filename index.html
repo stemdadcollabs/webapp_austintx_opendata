@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>City of Austin Data Explorer</title>
+    <title>City Open Data Explorer</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -18,15 +18,18 @@
     <div class="ambient"></div>
     <main class="page">
       <header class="hero">
-        <p class="eyebrow">City of Austin Open Data</p>
-        <h1>fdj4-gpfu dataset explorer</h1>
-        <p class="sub">
+        <p class="eyebrow" id="datasetEyebrow">City Open Data</p>
+        <nav id="datasetTabs" class="dataset-tabs" role="tablist" aria-label="Open data sources"></nav>
+        <h1 id="datasetTitle">Open data dataset explorer</h1>
+        <p class="sub" id="datasetSub">
           Connect to the Socrata v3 query endpoint and inspect rows in real time
           without leaving your browser.
         </p>
         <div class="pill-row">
-          <span class="pill">Endpoint: https://datahub.austintexas.gov/api/v3/views/fdj4-gpfu/query.json</span>
-          <span class="pill">Mode: Live query</span>
+          <span class="pill" id="datasetEndpoint">
+            Endpoint: https://datahub.austintexas.gov/api/v3/views/fdj4-gpfu/query.json
+          </span>
+          <span class="pill" id="datasetMode">Mode: Live query</span>
         </div>
       </header>
 
@@ -62,8 +65,8 @@
       <section id="chartSection" class="chart-card" hidden>
         <div class="chart-header">
           <div>
-            <h2>Monthly comparison</h2>
-            <p class="chart-sub">2024 vs 2025 incident counts from Occurred Date.</p>
+            <h2 id="chartTitle">Monthly comparison</h2>
+            <p class="chart-sub" id="chartSub">2024 vs 2025 incident counts from Occurred Date.</p>
           </div>
           <div class="legend">
             <span class="legend-item">

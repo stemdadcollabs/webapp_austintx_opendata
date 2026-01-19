@@ -1,5 +1,41 @@
-const API_URL = "https://datahub.austintexas.gov/api/v3/views/fdj4-gpfu/query.json";
-const STORAGE_KEY = "austinOpenDataToken";
+const DATASETS = [
+  {
+    id: "austin",
+    label: "Austin",
+    city: "Austin",
+    datasetId: "fdj4-gpfu",
+    datasetName: "Crime Reports",
+    endpoint: "https://datahub.austintexas.gov/api/v3/views/fdj4-gpfu/query.json",
+    description:
+      "Crime Reports (Austin Police) dataset with live rows and monthly comparisons.",
+    compareDescription: "2024 vs 2025 incident counts from Occurred Date.",
+    dateField: "occ_date",
+    compareStart: "2024-01-01T00:00:00.000",
+    compareEnd: "2026-01-01T00:00:00.000",
+  },
+  {
+    id: "dallas",
+    label: "Dallas",
+    city: "Dallas",
+    datasetId: "qv6i-rri7",
+    datasetName: "Police Incidents",
+    endpoint: "https://www.dallasopendata.com/api/v3/views/qv6i-rri7/query.json",
+    description:
+      "Police Incidents dataset from Dallas Open Data with live rows and monthly comparisons.",
+    compareDescription: "2024 vs 2025 incident counts from Date1 of Occurrence.",
+    dateField: "date1",
+    dateFieldCast: "floating_timestamp",
+    compareStart: "2024-01-01",
+    compareEnd: "2026-01-01",
+  },
+];
+
+const ACTIVE_DATASET_KEY = "activeOpenDataDataset";
+const TOKEN_STORAGE_PREFIX = "openDataToken:";
+const LEGACY_TOKEN_KEYS = {
+  austin: "austinOpenDataToken",
+  dallas: "dallasOpenDataToken",
+};
 
 const limitInput = document.getElementById("limitInput");
 const searchInput = document.getElementById("searchInput");
@@ -11,6 +47,14 @@ const statsEl = document.getElementById("stats");
 const tableWrapper = document.getElementById("tableWrapper");
 const chartSection = document.getElementById("chartSection");
 const chartWrapper = document.getElementById("chartWrapper");
+const datasetTabs = document.getElementById("datasetTabs");
+const datasetEyebrow = document.getElementById("datasetEyebrow");
+const datasetTitle = document.getElementById("datasetTitle");
+const datasetSub = document.getElementById("datasetSub");
+const datasetEndpoint = document.getElementById("datasetEndpoint");
+const datasetMode = document.getElementById("datasetMode");
+const chartTitle = document.getElementById("chartTitle");
+const chartSub = document.getElementById("chartSub");
 
 const VIEW_MODES = {
   ROWS: "rows",
@@ -32,37 +76,166 @@ const MONTH_LABELS = [
   "Dec",
 ];
 
-const COMPARE_START = "2024-01-01T00:00:00.000";
-const COMPARE_END = "2026-01-01T00:00:00.000";
+const DEFAULT_COMPARE_START = "2024-01-01T00:00:00.000";
+const DEFAULT_COMPARE_END = "2026-01-01T00:00:00.000";
 
 const state = {
   columns: [],
   rows: [],
+  activeDatasetId: null,
 };
 
-const storedToken = localStorage.getItem(STORAGE_KEY);
-const fallbackToken =
-  typeof window.AUSTIN_APP_TOKEN === "string" ? window.AUSTIN_APP_TOKEN.trim() : "";
+const LEGACY_FALLBACK_TOKENS = {
+  austin: typeof window.AUSTIN_APP_TOKEN === "string" ? window.AUSTIN_APP_TOKEN.trim() : "",
+  dallas: typeof window.DALLAS_APP_TOKEN === "string" ? window.DALLAS_APP_TOKEN.trim() : "",
+};
 
-if (storedToken) {
-  tokenInput.value = storedToken;
-} else if (fallbackToken) {
-  tokenInput.value = fallbackToken;
-  localStorage.setItem(STORAGE_KEY, fallbackToken);
+const FALLBACK_TOKENS =
+  window.OPEN_DATA_TOKENS && typeof window.OPEN_DATA_TOKENS === "object"
+    ? { ...LEGACY_FALLBACK_TOKENS, ...window.OPEN_DATA_TOKENS }
+    : { ...LEGACY_FALLBACK_TOKENS };
+
+function tokenStorageKey(datasetId) {
+  return `${TOKEN_STORAGE_PREFIX}${datasetId}`;
 }
 
-tokenInput.addEventListener("change", () => {
-  const token = tokenInput.value.trim();
-  if (token) {
-    localStorage.setItem(STORAGE_KEY, token);
-  } else {
-    localStorage.removeItem(STORAGE_KEY);
+function getStoredToken(datasetId) {
+  if (!datasetId) {
+    return "";
   }
-});
+  const key = tokenStorageKey(datasetId);
+  let token = localStorage.getItem(key);
+
+  if (!token && LEGACY_TOKEN_KEYS[datasetId]) {
+    token = localStorage.getItem(LEGACY_TOKEN_KEYS[datasetId]);
+    if (token) {
+      localStorage.setItem(key, token);
+    }
+  }
+
+  if (!token && FALLBACK_TOKENS[datasetId]) {
+    token = String(FALLBACK_TOKENS[datasetId]).trim();
+    if (token) {
+      localStorage.setItem(key, token);
+    }
+  }
+
+  return token || "";
+}
+
+function setStoredToken(datasetId, token) {
+  const key = tokenStorageKey(datasetId);
+  if (token) {
+    localStorage.setItem(key, token);
+  } else {
+    localStorage.removeItem(key);
+  }
+}
+
+function getDatasetById(datasetId) {
+  return DATASETS.find((dataset) => dataset.id === datasetId) || DATASETS[0];
+}
+
+function getActiveDataset() {
+  return getDatasetById(state.activeDatasetId);
+}
+
+function syncTokenInput(datasetId) {
+  const token = getStoredToken(datasetId);
+  tokenInput.value = token;
+  const dataset = getDatasetById(datasetId);
+  tokenInput.placeholder = dataset
+    ? `${dataset.label} app token`
+    : "Socrata app token";
+}
+
+function updateDatasetUI() {
+  const dataset = getActiveDataset();
+  if (!dataset) {
+    return;
+  }
+
+  if (datasetEyebrow) {
+    datasetEyebrow.textContent = `City of ${dataset.city} Open Data`;
+  }
+  if (datasetTitle) {
+    datasetTitle.textContent = `${dataset.datasetName} (${dataset.datasetId})`;
+  }
+  if (datasetSub) {
+    datasetSub.textContent = dataset.description;
+  }
+  if (datasetEndpoint) {
+    datasetEndpoint.textContent = `Endpoint: ${dataset.endpoint}`;
+  }
+  if (datasetMode) {
+    datasetMode.textContent = "Mode: Live query";
+  }
+  if (chartTitle) {
+    chartTitle.textContent = `Monthly comparison - ${dataset.label}`;
+  }
+  if (chartSub) {
+    chartSub.textContent = dataset.compareDescription;
+  }
+}
+
+function renderDatasetTabs() {
+  if (!datasetTabs) {
+    return;
+  }
+
+  datasetTabs.innerHTML = "";
+  DATASETS.forEach((dataset) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "dataset-tab";
+    button.textContent = dataset.label;
+    button.setAttribute("role", "tab");
+    const isActive = dataset.id === state.activeDatasetId;
+    button.setAttribute("aria-selected", isActive ? "true" : "false");
+    if (isActive) {
+      button.classList.add("active");
+    }
+    button.addEventListener("click", () => {
+      setActiveDataset(dataset.id);
+    });
+    datasetTabs.appendChild(button);
+  });
+}
+
+function setActiveDataset(datasetId) {
+  const dataset = getDatasetById(datasetId);
+  if (state.activeDatasetId === dataset.id) {
+    return;
+  }
+  state.activeDatasetId = dataset.id;
+  localStorage.setItem(ACTIVE_DATASET_KEY, dataset.id);
+  syncTokenInput(dataset.id);
+  updateDatasetUI();
+  renderDatasetTabs();
+  updateViewMode();
+  loadData();
+}
+
+function initializeDataset() {
+  const storedDatasetId = localStorage.getItem(ACTIVE_DATASET_KEY);
+  const initialDatasetId = DATASETS.some((dataset) => dataset.id === storedDatasetId)
+    ? storedDatasetId
+    : DATASETS[0]?.id;
+
+  state.activeDatasetId = initialDatasetId;
+  syncTokenInput(initialDatasetId);
+  updateDatasetUI();
+  renderDatasetTabs();
+}
 
 viewSelect.addEventListener("change", () => {
   updateViewMode();
   loadData();
+});
+
+tokenInput.addEventListener("input", () => {
+  const token = tokenInput.value.trim();
+  setStoredToken(state.activeDatasetId, token);
 });
 
 refreshButton.addEventListener("click", () => {
@@ -102,17 +275,24 @@ function buildRowQuery() {
   return `select * limit ${limit}`;
 }
 
-function buildMonthlyQuery() {
+function buildMonthlyQuery(dataset) {
+  const dateField = dataset.dateField;
+  const dateExpression = dataset.dateFieldCast
+    ? `${dateField}::${dataset.dateFieldCast}`
+    : dateField;
+  const start = dataset.compareStart || DEFAULT_COMPARE_START;
+  const end = dataset.compareEnd || DEFAULT_COMPARE_END;
+
   return [
-    "select date_trunc_ym(occ_date) as month_start, count(*) as count",
-    `where occ_date >= '${COMPARE_START}' and occ_date < '${COMPARE_END}'`,
+    `select date_trunc_ym(${dateExpression}) as month_start, count(*) as count`,
+    `where ${dateField} >= '${start}' and ${dateField} < '${end}'`,
     "group by month_start",
     "order by month_start",
   ].join(" ");
 }
 
-function buildUrl(query) {
-  const url = new URL(API_URL);
+function buildUrl(dataset, query) {
+  const url = new URL(dataset.endpoint);
   url.searchParams.set("query", query);
   const token = tokenInput.value.trim();
   if (token) {
@@ -379,6 +559,9 @@ function formatCell(value) {
   if (value === null || value === undefined) {
     return "";
   }
+  if (typeof value === "number") {
+    return formatNumber(value);
+  }
   if (typeof value === "object") {
     return JSON.stringify(value);
   }
@@ -467,12 +650,13 @@ function applyFilters() {
 
 async function loadData() {
   const monthly = isMonthlyCompare();
+  const dataset = getActiveDataset();
   setStatus(monthly ? "Loading monthly comparison..." : "Loading data...");
   statsEl.textContent = "";
 
   try {
-    const query = monthly ? buildMonthlyQuery() : buildRowQuery();
-    const response = await fetch(buildUrl(query), {
+    const query = monthly ? buildMonthlyQuery(dataset) : buildRowQuery();
+    const response = await fetch(buildUrl(dataset, query), {
       headers: {
         Accept: "application/json",
       },
@@ -499,7 +683,11 @@ async function loadData() {
       setStatus("Monthly comparison loaded.");
       renderTable(comparison.columns, comparison.rows);
       renderMonthlyChart(comparison);
-      statsEl.textContent = `2024 total: ${comparison.totals.total2024} | 2025 total: ${comparison.totals.total2025} | Change: ${comparison.totals.change}`;
+      statsEl.textContent = `2024 total: ${formatNumber(
+        comparison.totals.total2024
+      )} | 2025 total: ${formatNumber(comparison.totals.total2025)} | Change: ${formatNumber(
+        comparison.totals.change
+      )}`;
       return;
     }
 
@@ -522,5 +710,6 @@ async function loadData() {
   }
 }
 
+initializeDataset();
 updateViewMode();
 loadData();
