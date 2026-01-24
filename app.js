@@ -771,7 +771,6 @@ async function fetchGroupCounts(dataset, dateExpression, start, end, field, limi
     `${dateExpression} >= '${formatDateForSoql(start)}'`,
     `${dateExpression} < '${formatDateForSoql(end)}'`,
     `${field} is not null`,
-    `${field} != ''`,
   ];
   const query = [
     `select ${field} as label, count(*) as count`,
@@ -781,10 +780,20 @@ async function fetchGroupCounts(dataset, dateExpression, start, end, field, limi
     `limit ${limit}`,
   ].join(" ");
   const { rows } = await fetchQuery(dataset, query);
-  return rows.map((row) => ({
-    label: row.label ?? row[0],
-    count: Number(row.count ?? row[1] ?? 0) || 0,
-  }));
+  return rows
+    .map((row) => ({
+      label: row.label ?? row[0],
+      count: Number(row.count ?? row[1] ?? 0) || 0,
+    }))
+    .filter((row) => {
+      if (row.label === null || row.label === undefined) {
+        return false;
+      }
+      if (typeof row.label === "string" && row.label.trim() === "") {
+        return false;
+      }
+      return true;
+    });
 }
 
 async function fetchDailyCounts(dataset, dateExpression, start, end) {
