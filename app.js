@@ -18,8 +18,13 @@ const DATASETS = [
     geoField: null,
     latField: null,
     lonField: null,
-    mapCenter: null,
-    mapZoom: null,
+    mapType: "choropleth",
+    choroplethUrl: "https://data.austintexas.gov/resource/w3v2-cj58.geojson",
+    choroplethKey: "district_number",
+    choroplethLabel: "district_name",
+    choroplethField: "council_district",
+    mapCenter: [30.2672, -97.7431],
+    mapZoom: 10,
   },
   {
     id: "dallas",
@@ -41,6 +46,7 @@ const DATASETS = [
     geoField: "geocoded_column",
     latField: null,
     lonField: null,
+    mapType: "points",
     mapCenter: [32.7767, -96.797],
     mapZoom: 10,
   },
@@ -63,6 +69,7 @@ const DATASETS = [
     geoField: "location",
     latField: "latitude",
     lonField: "longitude",
+    mapType: "points",
     mapCenter: [41.8781, -87.6298],
     mapZoom: 10,
   },
@@ -144,6 +151,8 @@ const state = {
 
 let mapInstance = null;
 let mapMarkers = null;
+let mapGeoLayer = null;
+const mapGeoJsonCache = {};
 
 const LEGACY_FALLBACK_TOKENS = {
   austin: typeof window.AUSTIN_APP_TOKEN === "string" ? window.AUSTIN_APP_TOKEN.trim() : "",
@@ -425,7 +434,7 @@ function parseDateValue(value) {
 
 function formatDisplayDate(date) {
   if (!(date instanceof Date)) {
-    return "—";
+    return "--";
   }
   return date.toLocaleDateString(undefined, {
     year: "numeric",
@@ -436,7 +445,7 @@ function formatDisplayDate(date) {
 
 function formatShortDate(date) {
   if (!(date instanceof Date)) {
-    return "—";
+    return "--";
   }
   return date.toLocaleDateString(undefined, {
     month: "short",
@@ -944,6 +953,9 @@ function formatChange(current, previous) {
 }
 
 function hasGeoSupport(dataset) {
+  if (dataset?.mapType === "choropleth") {
+    return Boolean(dataset.choroplethUrl && dataset.choroplethKey && dataset.choroplethField);
+  }
   return Boolean(dataset.geoField || (dataset.latField && dataset.lonField));
 }
 
@@ -951,6 +963,16 @@ function setMapMessage(message) {
   if (mapEmpty) {
     mapEmpty.textContent = message || "";
     mapEmpty.hidden = !message;
+  }
+}
+
+function clearMapLayers() {
+  if (mapMarkers) {
+    mapMarkers.clearLayers();
+  }
+  if (mapGeoLayer && mapInstance) {
+    mapInstance.removeLayer(mapGeoLayer);
+    mapGeoLayer = null;
   }
 }
 
@@ -1048,7 +1070,7 @@ function extractLatLng(row, dataset) {
 }
 
 async function fetchMapPoints(dataset, dateExpression, start, end, limit = 800) {
-  if (!hasGeoSupport(dataset)) {
+  if (!hasGeoSupport(dataset) || dataset.mapType === "choropleth") {
     return [];
   }
 
@@ -1085,7 +1107,43 @@ async function fetchMapPoints(dataset, dateExpression, start, end, limit = 800) 
     .filter((point) => point && Number.isFinite(point.lat) && Number.isFinite(point.lon));
 }
 
-function renderMap(points, dataset) {
+async function fetchGeoJson(url) {
+  if (!url) {
+    return null;
+  }
+  if (mapGeoJsonCache[url]) {
+    return mapGeoJsonCache[url];
+  }
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`GeoJSON request failed with status ${response.status}`);
+  }
+  const data = await response.json();
+  mapGeoJsonCache[url] = data;
+  return data;
+}
+
+function getChoroplethColor(value, maxValue) {
+  if (!maxValue || maxValue <= 0) {
+    return "#f0e6d6";
+  }
+  const ratio = value / maxValue;
+  if (ratio >= 0.8) {
+    return "#0f766e";
+  }
+  if (ratio >= 0.6) {
+    return "#2f978f";
+  }
+  if (ratio >= 0.4) {
+    return "#56b7ad";
+  }
+  if (ratio >= 0.2) {
+    return "#83cfc6";
+  }
+  return "#cfe9e6";
+}
+
+function renderPointMap(points, dataset) {
   if (!mapCard) {
     return;
   }
@@ -1102,12 +1160,8 @@ function renderMap(points, dataset) {
     setMapMessage("Map failed to load.");
     return;
   }
-
-  if (!mapMarkers) {
-    mapMarkers = window.L.layerGroup().addTo(map);
-  } else {
-    mapMarkers.clearLayers();
-  }
+  clearMapLayers();
+  mapMarkers = window.L.layerGroup().addTo(map);
 
   if (!points.length) {
     setMapMessage("No mapped incidents found for the last 30 days.");
@@ -1132,6 +1186,82 @@ function renderMap(points, dataset) {
   const bounds = window.L.latLngBounds(points.map((point) => [point.lat, point.lon]));
   map.fitBounds(bounds, { padding: [24, 24] });
   setTimeout(() => map.invalidateSize(), 50);
+}
+
+function renderChoroplethMap(geojson, counts, dataset) {
+  if (!mapCard) {
+    return;
+  }
+
+  if (!hasGeoSupport(dataset)) {
+    mapCard.hidden = true;
+    setMapMessage("This dataset does not include location boundaries.");
+    return;
+  }
+
+  mapCard.hidden = false;
+  const map = ensureMap(dataset);
+  if (!map) {
+    setMapMessage("Map failed to load.");
+    return;
+  }
+  clearMapLayers();
+
+  if (!geojson || !Array.isArray(geojson.features) || !geojson.features.length) {
+    setMapMessage("No boundary data available.");
+    return;
+  }
+
+  const countsByKey = new Map();
+  counts.forEach((row) => {
+    const key = row.label === null || row.label === undefined ? "" : String(row.label).trim();
+    if (key) {
+      countsByKey.set(key, row.count || 0);
+    }
+  });
+  const maxCount = Math.max(...countsByKey.values(), 0);
+
+  mapGeoLayer = window.L.geoJSON(geojson, {
+    style: (feature) => {
+      const keyValue = feature?.properties?.[dataset.choroplethKey];
+      const key = keyValue === null || keyValue === undefined ? "" : String(keyValue).trim();
+      const count = countsByKey.get(key) || 0;
+      return {
+        color: "#c6b89f",
+        weight: 1,
+        fillColor: getChoroplethColor(count, maxCount),
+        fillOpacity: 0.7,
+      };
+    },
+    onEachFeature: (feature, layer) => {
+      const keyValue = feature?.properties?.[dataset.choroplethKey];
+      const key = keyValue === null || keyValue === undefined ? "" : String(keyValue).trim();
+      const count = countsByKey.get(key) || 0;
+      const labelField = dataset.choroplethLabel || dataset.choroplethKey;
+      const labelValue = feature?.properties?.[labelField] ?? (key ? `District ${key}` : "District");
+      layer.bindTooltip(`${labelValue}: ${formatNumber(count)} incidents`, { sticky: true });
+    },
+  }).addTo(map);
+
+  const bounds = mapGeoLayer.getBounds();
+  if (bounds.isValid()) {
+    map.fitBounds(bounds, { padding: [24, 24] });
+  } else if (dataset.mapCenter) {
+    map.setView(dataset.mapCenter, dataset.mapZoom || 10);
+  }
+  setMapMessage("Showing incident counts by council district for the last 30 days.");
+  setTimeout(() => map.invalidateSize(), 50);
+}
+
+function renderMapData(mapData, dataset) {
+  if (!mapData) {
+    return;
+  }
+  if (mapData.type === "choropleth") {
+    renderChoroplethMap(mapData.geojson, mapData.counts, dataset);
+  } else if (mapData.type === "points") {
+    renderPointMap(mapData.points, dataset);
+  }
 }
 
 function getCellValue(row, column) {
@@ -1265,10 +1395,14 @@ async function loadStats() {
   if (mapCard) {
     mapCard.hidden = !hasGeoSupport(dataset);
   }
-  setMapMessage(hasGeoSupport(dataset) ? "Loading map..." : "This dataset does not include location coordinates.");
-  if (mapMarkers) {
-    mapMarkers.clearLayers();
+  if (!hasGeoSupport(dataset)) {
+    setMapMessage("This dataset does not include location coordinates.");
+  } else if (dataset.mapType === "choropleth") {
+    setMapMessage("Loading district map...");
+  } else {
+    setMapMessage("Loading map...");
   }
+  clearMapLayers();
 
   try {
     await ensureColumnsLoaded(dataset);
@@ -1295,10 +1429,23 @@ async function loadStats() {
     const addressField = resolveField(dataset, dataset.addressFields);
 
     if (mapSub) {
-      mapSub.textContent = `Last 30 days: ${formatDisplayDate(last30Start)} → ${formatDisplayDate(
+      mapSub.textContent = `Last 30 days: ${formatDisplayDate(last30Start)} -> ${formatDisplayDate(
         latestDay
       )}`;
     }
+
+    const mapDataPromise =
+      dataset.mapType === "choropleth"
+        ? Promise.all([
+            fetchGroupCounts(dataset, dateExpression, last30Start, rangeEnd, dataset.choroplethField, 20),
+            fetchGeoJson(dataset.choroplethUrl),
+          ]).then(([counts, geojson]) => ({ type: "choropleth", counts, geojson }))
+        : hasGeoSupport(dataset)
+          ? fetchMapPoints(dataset, dateExpression, last30Start, rangeEnd, 900).then((points) => ({
+              type: "points",
+              points,
+            }))
+          : Promise.resolve(null);
 
     const [
       last7,
@@ -1311,7 +1458,7 @@ async function loadStats() {
       categoryRows,
       locationRows,
       addressRows,
-      mapPoints,
+      mapData,
     ] = await Promise.all([
       fetchCount(dataset, dateExpression, last7Start, rangeEnd),
       fetchCount(dataset, dateExpression, last30Start, rangeEnd),
@@ -1329,9 +1476,7 @@ async function loadStats() {
       addressField
         ? fetchGroupCounts(dataset, dateExpression, last30Start, rangeEnd, addressField, 10)
         : Promise.resolve([]),
-      hasGeoSupport(dataset)
-        ? fetchMapPoints(dataset, dateExpression, last30Start, rangeEnd, 900)
-        : Promise.resolve([]),
+      mapDataPromise,
     ]);
 
     if (topCategoriesCard) {
@@ -1349,7 +1494,7 @@ async function loadStats() {
     renderTopList(topCategories, categoryRows);
     renderTopList(topLocations, locationRows);
     renderTopList(topAddresses, addressRows);
-    renderMap(mapPoints, dataset);
+    renderMapData(mapData, dataset);
 
     const last30Change = formatChange(last30, prev30);
     const ytdChange = formatChange(ytd, prevYtd);
@@ -1363,8 +1508,8 @@ async function loadStats() {
 
     if (dataSpan) {
       dataSpan.textContent = minDate
-        ? `${formatDisplayDate(minDate)} → ${formatDisplayDate(latestDay)}`
-        : "—";
+        ? `${formatDisplayDate(minDate)} -> ${formatDisplayDate(latestDay)}`
+        : "--";
     }
 
     if (latestDate) {
@@ -1377,7 +1522,7 @@ async function loadStats() {
     setStatus("High-level stats loaded.");
     statsEl.textContent = `Data through ${formatDisplayDate(
       latestDay
-    )} · Last 30 days: ${formatNumber(last30)} incidents.`;
+    )} - Last 30 days: ${formatNumber(last30)} incidents.`;
   } catch (error) {
     setStatus("Unable to load high-level stats. Add an app token if the API blocks the request.", "error");
     renderKpis([]);
@@ -1386,9 +1531,7 @@ async function loadStats() {
     renderTopList(topLocations, []);
     renderTopList(topAddresses, []);
     setMapMessage("Map unavailable due to an API error.");
-    if (mapMarkers) {
-      mapMarkers.clearLayers();
-    }
+    clearMapLayers();
   }
 }
 
