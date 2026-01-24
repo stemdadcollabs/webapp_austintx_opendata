@@ -97,6 +97,7 @@ const statsSub = document.getElementById("statsSub");
 const dataSpan = document.getElementById("dataSpan");
 const latestDate = document.getElementById("latestDate");
 const kpiGrid = document.getElementById("kpiGrid");
+const summaryList = document.getElementById("summaryList");
 const trendChart = document.getElementById("trendChart");
 const topCategories = document.getElementById("topCategories");
 const topLocations = document.getElementById("topLocations");
@@ -115,7 +116,9 @@ const datasetEyebrow = document.getElementById("datasetEyebrow");
 const datasetTitle = document.getElementById("datasetTitle");
 const datasetSub = document.getElementById("datasetSub");
 const datasetEndpoint = document.getElementById("datasetEndpoint");
+const datasetCode = document.getElementById("datasetCode");
 const datasetMode = document.getElementById("datasetMode");
+const lastUpdated = document.getElementById("lastUpdated");
 const chartTitle = document.getElementById("chartTitle");
 const chartSub = document.getElementById("chartSub");
 
@@ -226,19 +229,26 @@ function updateDatasetUI() {
   }
 
   if (datasetEyebrow) {
-    datasetEyebrow.textContent = `City of ${dataset.city} Open Data`;
+    datasetEyebrow.textContent = `${dataset.city} Open Data`;
   }
   if (datasetTitle) {
-    datasetTitle.textContent = `${dataset.datasetName} (${dataset.datasetId})`;
+    datasetTitle.textContent = dataset.datasetName;
   }
   if (datasetSub) {
     datasetSub.textContent = dataset.description;
   }
   if (datasetEndpoint) {
-    datasetEndpoint.textContent = `Endpoint: ${dataset.endpoint}`;
+    try {
+      datasetEndpoint.textContent = new URL(dataset.endpoint).hostname;
+    } catch (error) {
+      datasetEndpoint.textContent = dataset.endpoint;
+    }
+  }
+  if (datasetCode) {
+    datasetCode.textContent = dataset.datasetId;
   }
   if (datasetMode) {
-    datasetMode.textContent = "Mode: Live query";
+    datasetMode.textContent = "Mode: Live feed";
   }
   if (chartTitle) {
     chartTitle.textContent = `Monthly comparison - ${dataset.label}`;
@@ -281,6 +291,12 @@ function setActiveDataset(datasetId) {
   state.columns = [];
   state.rows = [];
   localStorage.setItem(ACTIVE_DATASET_KEY, dataset.id);
+  if (lastUpdated) {
+    lastUpdated.textContent = "--";
+  }
+  if (summaryList) {
+    summaryList.innerHTML = "<li>Loading summary...</li>";
+  }
   syncTokenInput(dataset.id);
   updateDatasetUI();
   renderDatasetTabs();
@@ -450,6 +466,19 @@ function formatShortDate(date) {
   return date.toLocaleDateString(undefined, {
     month: "short",
     day: "numeric",
+  });
+}
+
+function formatTimestamp(date) {
+  if (!(date instanceof Date)) {
+    return "--";
+  }
+  return date.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
   });
 }
 
@@ -910,6 +939,29 @@ function renderKpis(kpis) {
     card.append(label, value, meta);
     kpiGrid.appendChild(card);
   });
+}
+
+function renderSummary(items) {
+  if (!summaryList) {
+    return;
+  }
+  summaryList.innerHTML = "";
+  if (!items.length) {
+    summaryList.innerHTML = "<li>No summary available.</li>";
+    return;
+  }
+  items.forEach((item) => {
+    const li = document.createElement("li");
+    li.textContent = item;
+    summaryList.appendChild(li);
+  });
+}
+
+function setLastUpdatedNow() {
+  if (!lastUpdated) {
+    return;
+  }
+  lastUpdated.textContent = formatTimestamp(new Date());
 }
 
 function renderTopList(container, rows) {
@@ -1391,6 +1443,9 @@ async function loadStats() {
   if (statsSub) {
     statsSub.textContent = `${dataset.datasetName} from ${dataset.city} open data.`;
   }
+  if (summaryList) {
+    summaryList.innerHTML = "<li>Loading summary...</li>";
+  }
 
   if (topCategoriesCard) {
     topCategoriesCard.hidden = true;
@@ -1508,6 +1563,37 @@ async function loadStats() {
     const last30Change = formatChange(last30, prev30);
     const ytdChange = formatChange(ytd, prevYtd);
 
+    const summaryItems = [
+      `Last 30 days: ${formatNumber(last30)} incidents (${last30Change} vs prior 30 days).`,
+      `Year-to-date: ${formatNumber(ytd)} incidents (${ytdChange} vs same period last year).`,
+    ];
+
+    if (categoryRows.length) {
+      summaryItems.push(
+        `Top incident type: ${categoryRows[0].label} (${formatNumber(categoryRows[0].count)}).`
+      );
+    }
+
+    if (locationRows.length) {
+      summaryItems.push(
+        `Top location: ${locationRows[0].label} (${formatNumber(locationRows[0].count)}).`
+      );
+    }
+
+    if (mapData?.type === "choropleth" && mapData.counts?.length) {
+      summaryItems.push(
+        `Highest district: ${mapData.counts[0].label} (${formatNumber(mapData.counts[0].count)}).`
+      );
+    }
+
+    if (addressRows.length) {
+      summaryItems.push(
+        `Most frequent address: ${addressRows[0].label} (${formatNumber(addressRows[0].count)}).`
+      );
+    }
+
+    renderSummary(summaryItems.slice(0, 4));
+
     renderKpis([
       { label: "Last 7 days", value: last7, meta: "Latest week" },
       { label: "Last 30 days", value: last30, meta: `vs prior 30 days: ${last30Change}` },
@@ -1532,6 +1618,7 @@ async function loadStats() {
     statsEl.textContent = `Data through ${formatDisplayDate(
       latestDay
     )} - Last 30 days: ${formatNumber(last30)} incidents.`;
+    setLastUpdatedNow();
   } catch (error) {
     setStatus("Unable to load high-level stats. Add an app token if the API blocks the request.", "error");
     renderKpis([]);
@@ -1539,6 +1626,7 @@ async function loadStats() {
     renderTopList(topCategories, []);
     renderTopList(topLocations, []);
     renderTopList(topAddresses, []);
+    renderSummary([]);
     setMapMessage("Map unavailable due to an API error.");
     clearMapLayers();
   }
@@ -1578,6 +1666,7 @@ async function loadData() {
       )} | 2025 total: ${formatNumber(comparison.totals.total2025)} | Change: ${formatNumber(
         comparison.totals.change
       )}`;
+      setLastUpdatedNow();
       return;
     }
 
@@ -1592,6 +1681,7 @@ async function loadData() {
 
     setStatus("Data loaded.");
     applyFilters();
+    setLastUpdatedNow();
   } catch (error) {
     setStatus("Unable to load data. Add an app token if the API blocks the request.", "error");
     tableWrapper.innerHTML =

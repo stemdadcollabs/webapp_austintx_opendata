@@ -3,11 +3,22 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>City Open Data Explorer</title>
+    <title>Crime Decoder | Executive Briefing</title>
+    <meta
+      name="description"
+      content="Executive-ready crime intelligence dashboard with live open data, trend signals, and geographic context."
+    />
+    <meta name="theme-color" content="#101828" />
+    <meta property="og:title" content="Crime Decoder | Executive Briefing" />
+    <meta
+      property="og:description"
+      content="Executive-ready crime intelligence dashboard with live open data, trend signals, and geographic context."
+    />
+    <meta property="og:type" content="website" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Space+Grotesk:wght@400;500;600&display=swap"
+      href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=Manrope:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -20,44 +31,78 @@
     <div class="ambient"></div>
     <main class="page">
       <header class="hero">
-        <p class="eyebrow" id="datasetEyebrow">City Open Data</p>
-        <nav id="datasetTabs" class="dataset-tabs" role="tablist" aria-label="Open data sources"></nav>
-        <h1 id="datasetTitle">Open data dataset explorer</h1>
-        <p class="sub" id="datasetSub">
-          Connect to the Socrata v3 query endpoint and inspect rows in real time
-          without leaving your browser.
-        </p>
-        <div class="pill-row">
-          <span class="pill" id="datasetEndpoint">
-            Endpoint: https://datahub.austintexas.gov/api/v3/views/fdj4-gpfu/query.json
-          </span>
-          <span class="pill" id="datasetMode">Mode: Live query</span>
+        <div class="hero-top">
+          <div class="brand">
+            <span class="brand-mark">Crime Decoder</span>
+            <span class="brand-tag">Executive Briefing</span>
+          </div>
+          <div class="hero-status">
+            <span class="status-dot" aria-hidden="true"></span>
+            <span id="datasetMode">Mode: Live query</span>
+          </div>
+        </div>
+
+        <div class="hero-grid">
+          <div class="hero-copy">
+            <p class="eyebrow" id="datasetEyebrow">City Open Data</p>
+            <h1>Public Safety Intelligence Overview</h1>
+            <p class="sub" id="datasetSub">
+              Connect to the Socrata v3 query endpoint and inspect rows in real time
+              without leaving your browser.
+            </p>
+            <nav id="datasetTabs" class="dataset-tabs" role="tablist" aria-label="Open data sources"></nav>
+          </div>
+
+          <div class="hero-card">
+            <p class="hero-card-title" id="datasetTitle">Open data dataset explorer</p>
+          <div class="hero-meta">
+            <div class="meta-block">
+              <span>Source</span>
+              <strong id="datasetEndpoint">datahub.austintexas.gov</strong>
+            </div>
+            <div class="meta-block">
+              <span>Dataset</span>
+              <strong id="datasetCode">fdj4-gpfu</strong>
+            </div>
+            <div class="meta-block">
+              <span>Last refresh</span>
+              <strong id="lastUpdated">--</strong>
+            </div>
+            </div>
+          </div>
         </div>
       </header>
 
       <section class="panel">
         <div class="controls">
-          <label>
-            View
-            <select id="viewSelect">
-              <option value="stats" selected>High-level stats (latest)</option>
-              <option value="rows">Live rows</option>
-              <option value="monthly">Monthly compare (2024 vs 2025)</option>
-            </select>
-          </label>
-          <label>
-            Row limit
-            <input id="limitInput" type="number" min="1" max="5000" step="50" value="200" />
-          </label>
-          <label>
-            Search all fields
-            <input id="searchInput" type="search" placeholder="Type to filter rows" />
-          </label>
-          <label>
-            App token (optional)
-            <input id="tokenInput" type="text" placeholder="Socrata app token" />
-          </label>
-          <button id="refreshButton" type="button">Refresh data</button>
+          <div class="control-group">
+            <label>
+              View
+              <select id="viewSelect">
+                <option value="stats" selected>High-level stats (latest)</option>
+                <option value="rows">Live rows</option>
+                <option value="monthly">Monthly compare (2024 vs 2025)</option>
+              </select>
+            </label>
+            <button id="refreshButton" type="button">Refresh data</button>
+          </div>
+          <details class="advanced">
+            <summary>Advanced options</summary>
+            <div class="advanced-grid">
+              <label>
+                Row limit
+                <input id="limitInput" type="number" min="1" max="5000" step="50" value="200" />
+              </label>
+              <label>
+                Search all fields
+                <input id="searchInput" type="search" placeholder="Type to filter rows" />
+              </label>
+              <label>
+                App token (optional)
+                <input id="tokenInput" type="text" placeholder="Socrata app token" />
+              </label>
+            </div>
+          </details>
         </div>
         <div class="status-row">
           <span id="status" class="status">Ready.</span>
@@ -69,7 +114,7 @@
         <div class="stats-card span-all">
           <div class="stats-header">
             <div>
-              <h2>High-level snapshot</h2>
+              <h2>Executive snapshot</h2>
               <p class="stats-sub" id="statsSub">Latest available data for the selected city.</p>
             </div>
             <div class="stats-range">
@@ -84,6 +129,18 @@
             </div>
           </div>
           <div id="kpiGrid" class="kpi-grid"></div>
+        </div>
+
+        <div class="stats-card span-all summary-card">
+          <div class="stats-header">
+            <div>
+              <h3>Executive summary</h3>
+              <p class="stats-sub">Key signals for leadership review.</p>
+            </div>
+          </div>
+          <ul id="summaryList" class="summary-list">
+            <li>Loading summary...</li>
+          </ul>
         </div>
 
         <div class="stats-card span-all">
