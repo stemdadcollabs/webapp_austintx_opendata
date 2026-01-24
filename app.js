@@ -430,6 +430,10 @@ function addDays(date, days) {
   return next;
 }
 
+function startOfMonth(date) {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
 function parseDateValue(value) {
   if (!value) {
     return null;
@@ -1481,6 +1485,13 @@ async function loadStats() {
     const prev30Start = addDays(rangeEnd, -60);
     const prev30End = addDays(rangeEnd, -30);
 
+    const monthStart = startOfMonth(latestDay);
+    const daysElapsed = Math.max(1, Math.round((rangeEnd - monthStart) / (24 * 60 * 60 * 1000)));
+    const prevMonthStart = startOfMonth(addDays(monthStart, -1));
+    const prevMonthEnd = monthStart;
+    const prevMonthCompareEnd = addDays(prevMonthStart, daysElapsed);
+    const prevMonthWindowEnd = prevMonthCompareEnd < prevMonthEnd ? prevMonthCompareEnd : prevMonthEnd;
+
     const yearStart = new Date(latestDay.getFullYear(), 0, 1);
     const dayOfYear = Math.floor((latestDay - yearStart) / (24 * 60 * 60 * 1000)) + 1;
     const prevYearStart = new Date(latestDay.getFullYear() - 1, 0, 1);
@@ -1513,6 +1524,8 @@ async function loadStats() {
 
     const [
       last7,
+      monthToDate,
+      prevMonthToDate,
       last30,
       prev30,
       ytd,
@@ -1525,6 +1538,8 @@ async function loadStats() {
       mapData,
     ] = await Promise.all([
       fetchCount(dataset, dateExpression, last7Start, rangeEnd),
+      fetchCount(dataset, dateExpression, monthStart, rangeEnd),
+      fetchCount(dataset, dateExpression, prevMonthStart, prevMonthWindowEnd),
       fetchCount(dataset, dateExpression, last30Start, rangeEnd),
       fetchCount(dataset, dateExpression, prev30Start, prev30End),
       fetchCount(dataset, dateExpression, yearStart, rangeEnd),
@@ -1561,11 +1576,16 @@ async function loadStats() {
     renderMapData(mapData, dataset);
 
     const last30Change = formatChange(last30, prev30);
+    const monthToDateChange = formatChange(monthToDate, prevMonthToDate);
     const ytdChange = formatChange(ytd, prevYtd);
 
+    const last30Range = `${formatDisplayDate(last30Start)} -> ${formatDisplayDate(latestDay)}`;
+    const ytdRange = `${formatDisplayDate(yearStart)} -> ${formatDisplayDate(latestDay)}`;
+
     const summaryItems = [
-      `Last 30 days: ${formatNumber(last30)} incidents (${last30Change} vs prior 30 days).`,
-      `Year-to-date: ${formatNumber(ytd)} incidents (${ytdChange} vs same period last year).`,
+      `Month-to-date: ${formatNumber(monthToDate)} incidents (${monthToDateChange} vs prior month-to-date).`,
+      `Last 30 days (${last30Range}): ${formatNumber(last30)} incidents (${last30Change} vs prior 30 days).`,
+      `Year-to-date (${ytdRange}): ${formatNumber(ytd)} incidents (${ytdChange} vs same period last year).`,
     ];
 
     if (categoryRows.length) {
@@ -1596,8 +1616,13 @@ async function loadStats() {
 
     renderKpis([
       { label: "Last 7 days", value: last7, meta: "Latest week" },
-      { label: "Last 30 days", value: last30, meta: `vs prior 30 days: ${last30Change}` },
-      { label: "Year to date", value: ytd, meta: `vs prior year: ${ytdChange}` },
+      {
+        label: "Month to date",
+        value: monthToDate,
+        meta: `vs prior month: ${monthToDateChange}`,
+      },
+      { label: "Last 30 days", value: last30, meta: `${last30Range}` },
+      { label: "Year to date", value: ytd, meta: `${ytdRange}` },
       { label: "All time", value: allTime, meta: "All recorded incidents" },
     ]);
 
@@ -1617,7 +1642,7 @@ async function loadStats() {
     setStatus("High-level stats loaded.");
     statsEl.textContent = `Data through ${formatDisplayDate(
       latestDay
-    )} - Last 30 days: ${formatNumber(last30)} incidents.`;
+    )} - Month to date: ${formatNumber(monthToDate)} incidents.`;
     setLastUpdatedNow();
   } catch (error) {
     setStatus("Unable to load high-level stats. Add an app token if the API blocks the request.", "error");
