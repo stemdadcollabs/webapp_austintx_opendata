@@ -38,7 +38,8 @@
           <label>
             View
             <select id="viewSelect">
-              <option value="rows" selected>Live rows</option>
+              <option value="stats" selected>High-level stats (latest)</option>
+              <option value="rows">Live rows</option>
               <option value="monthly">Monthly compare (2024 vs 2025)</option>
             </select>
           </label>
@@ -62,6 +63,51 @@
         </div>
       </section>
 
+      <section id="statsSection" class="stats-grid" hidden>
+        <div class="stats-card span-all">
+          <div class="stats-header">
+            <div>
+              <h2>High-level snapshot</h2>
+              <p class="stats-sub" id="statsSub">Latest available data for the selected city.</p>
+            </div>
+            <div class="stats-range">
+              <div>
+                Data span
+                <strong id="dataSpan">—</strong>
+              </div>
+              <div>
+                Latest incident
+                <strong id="latestDate">—</strong>
+              </div>
+            </div>
+          </div>
+          <div id="kpiGrid" class="kpi-grid"></div>
+        </div>
+
+        <div class="stats-card span-all">
+          <div class="stats-header">
+            <div>
+              <h3>Weekly trend (last 26 weeks)</h3>
+              <p class="stats-sub">Counts based on incident date.</p>
+            </div>
+          </div>
+          <div id="trendChart" class="trend-grid"></div>
+        </div>
+
+        <div id="topCategoriesCard" class="stats-card">
+          <h3>Top incident types (last 30 days)</h3>
+          <div id="topCategories" class="stats-list"></div>
+        </div>
+        <div id="topLocationsCard" class="stats-card">
+          <h3>Top locations (last 30 days)</h3>
+          <div id="topLocations" class="stats-list"></div>
+        </div>
+        <div id="topAddressesCard" class="stats-card">
+          <h3>Repeat addresses (last 30 days)</h3>
+          <div id="topAddresses" class="stats-list"></div>
+        </div>
+      </section>
+
       <section id="chartSection" class="chart-card" hidden>
         <div class="chart-header">
           <div>
@@ -82,7 +128,7 @@
         <div id="chartWrapper" class="chart-wrapper"></div>
       </section>
 
-      <section class="table-card">
+      <section id="tableCard" class="table-card">
         <div id="tableWrapper" class="table-wrapper">
           <div class="empty-state">Load data to preview rows.</div>
         </div>

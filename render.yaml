@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: city-open-data-explorer
+    runtime: static
+    buildCommand: bash scripts/render-build.sh
+    staticPublishPath: .
+    envVars:
+      - key: AUSTIN_APP_TOKEN
+        sync: false
+      - key: DALLAS_APP_TOKEN
+        sync: false
+      - key: CHICAGO_APP_TOKEN
+        sync: false

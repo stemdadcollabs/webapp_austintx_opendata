@@ -12,6 +12,9 @@ const DATASETS = [
     dateField: "occ_date",
     compareStart: "2024-01-01T00:00:00.000",
     compareEnd: "2026-01-01T00:00:00.000",
+    categoryFields: ["crime_type", "category_description", "ucr_category"],
+    locationFields: ["location_type"],
+    addressFields: [],
   },
   {
     id: "dallas",
@@ -27,6 +30,9 @@ const DATASETS = [
     dateFieldCast: "floating_timestamp",
     compareStart: "2024-01-01",
     compareEnd: "2026-01-01",
+    categoryFields: ["offincident", "signal", "offense"],
+    locationFields: ["premise", "location_type", "type_location"],
+    addressFields: ["incident_address", "address"],
   },
   {
     id: "chicago",
@@ -41,6 +47,9 @@ const DATASETS = [
     dateField: "date",
     compareStart: "2024-01-01",
     compareEnd: "2026-01-01",
+    categoryFields: ["primary_type", "description", "iucr"],
+    locationFields: ["location_description"],
+    addressFields: ["block"],
   },
 ];
 
@@ -60,6 +69,19 @@ const refreshButton = document.getElementById("refreshButton");
 const statusEl = document.getElementById("status");
 const statsEl = document.getElementById("stats");
 const tableWrapper = document.getElementById("tableWrapper");
+const tableCard = document.getElementById("tableCard");
+const statsSection = document.getElementById("statsSection");
+const statsSub = document.getElementById("statsSub");
+const dataSpan = document.getElementById("dataSpan");
+const latestDate = document.getElementById("latestDate");
+const kpiGrid = document.getElementById("kpiGrid");
+const trendChart = document.getElementById("trendChart");
+const topCategories = document.getElementById("topCategories");
+const topLocations = document.getElementById("topLocations");
+const topAddresses = document.getElementById("topAddresses");
+const topCategoriesCard = document.getElementById("topCategoriesCard");
+const topLocationsCard = document.getElementById("topLocationsCard");
+const topAddressesCard = document.getElementById("topAddressesCard");
 const chartSection = document.getElementById("chartSection");
 const chartWrapper = document.getElementById("chartWrapper");
 const datasetTabs = document.getElementById("datasetTabs");
@@ -74,6 +96,7 @@ const chartSub = document.getElementById("chartSub");
 const VIEW_MODES = {
   ROWS: "rows",
   MONTHLY: "monthly",
+  STATS: "stats",
 };
 
 const MONTH_LABELS = [
@@ -224,6 +247,8 @@ function setActiveDataset(datasetId) {
     return;
   }
   state.activeDatasetId = dataset.id;
+  state.columns = [];
+  state.rows = [];
   localStorage.setItem(ACTIVE_DATASET_KEY, dataset.id);
   syncTokenInput(dataset.id);
   updateDatasetUI();
@@ -259,13 +284,13 @@ refreshButton.addEventListener("click", () => {
 });
 
 searchInput.addEventListener("input", () => {
-  if (!isMonthlyCompare()) {
+  if (isRowView()) {
     applyFilters();
   }
 });
 
 limitInput.addEventListener("change", () => {
-  if (!isMonthlyCompare()) {
+  if (isRowView()) {
     loadData();
   }
 });
@@ -274,12 +299,28 @@ function isMonthlyCompare() {
   return viewSelect.value === VIEW_MODES.MONTHLY;
 }
 
+function isStatsView() {
+  return viewSelect.value === VIEW_MODES.STATS;
+}
+
+function isRowView() {
+  return viewSelect.value === VIEW_MODES.ROWS;
+}
+
 function updateViewMode() {
   const monthly = isMonthlyCompare();
-  limitInput.disabled = monthly;
-  searchInput.disabled = monthly;
+  const statsView = isStatsView();
+  const rowsView = isRowView();
+  limitInput.disabled = !rowsView;
+  searchInput.disabled = !rowsView;
   if (chartSection) {
     chartSection.hidden = !monthly;
+  }
+  if (statsSection) {
+    statsSection.hidden = !statsView;
+  }
+  if (tableCard) {
+    tableCard.hidden = !rowsView;
   }
 }
 
@@ -291,11 +332,14 @@ function buildRowQuery() {
   return `select * limit ${limit}`;
 }
 
+function getDateExpression(dataset) {
+  const dateField = dataset.dateField;
+  return dataset.dateFieldCast ? `${dateField}::${dataset.dateFieldCast}` : dateField;
+}
+
 function buildMonthlyQuery(dataset) {
   const dateField = dataset.dateField;
-  const dateExpression = dataset.dateFieldCast
-    ? `${dateField}::${dataset.dateFieldCast}`
-    : dateField;
+  const dateExpression = getDateExpression(dataset);
   const start = dataset.compareStart || DEFAULT_COMPARE_START;
   const end = dataset.compareEnd || DEFAULT_COMPARE_END;
 
@@ -315,6 +359,64 @@ function buildUrl(dataset, query) {
     url.searchParams.set("$$app_token", token);
   }
   return url.toString();
+}
+
+function formatDateForSoql(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function startOfDay(date) {
+  const next = new Date(date);
+  next.setHours(0, 0, 0, 0);
+  return next;
+}
+
+function addDays(date, days) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next;
+}
+
+function parseDateValue(value) {
+  if (!value) {
+    return null;
+  }
+  let text = String(value).trim();
+  if (!text) {
+    return null;
+  }
+  if (text.includes(" ") && !text.includes("T")) {
+    text = text.replace(" ", "T");
+  }
+  const parsed = new Date(text);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+  return parsed;
+}
+
+function formatDisplayDate(date) {
+  if (!(date instanceof Date)) {
+    return "—";
+  }
+  return date.toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function formatShortDate(date) {
+  if (!(date instanceof Date)) {
+    return "—";
+  }
+  return date.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
 }
 
 function normalizePayload(payload) {
@@ -357,6 +459,37 @@ function normalizePayload(payload) {
     columns: buildColumns(metaColumns, payload),
     rows: [payload],
   };
+}
+
+async function fetchQuery(dataset, query) {
+  const response = await fetch(buildUrl(dataset, query), {
+    headers: {
+      Accept: "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Request failed with status ${response.status}`);
+  }
+
+  const payload = await response.json();
+  return normalizePayload(payload);
+}
+
+function resolveField(dataset, candidates) {
+  if (!Array.isArray(candidates) || candidates.length === 0) {
+    return null;
+  }
+  const available = new Set(state.columns.map((column) => column.key));
+  for (const candidate of candidates) {
+    if (!candidate) {
+      continue;
+    }
+    if (!available.size || available.has(candidate)) {
+      return candidate;
+    }
+  }
+  return candidates[0] || null;
 }
 
 function buildColumns(metaColumns, sampleRow) {
@@ -554,6 +687,237 @@ function renderMonthlyChart(comparison) {
   chartWrapper.appendChild(grid);
 }
 
+async function ensureColumnsLoaded(dataset) {
+  if (state.columns.length) {
+    return;
+  }
+  const { columns } = await fetchQuery(dataset, "select * limit 1");
+  state.columns = columns;
+}
+
+async function fetchDateRange(dataset, dateExpression) {
+  const query = `select min(${dateExpression}) as min_date, max(${dateExpression}) as max_date where ${dateExpression} is not null`;
+  const { rows } = await fetchQuery(dataset, query);
+  if (!rows.length) {
+    return { minDate: null, maxDate: null };
+  }
+  const row = rows[0];
+  const minValue = row.min_date ?? row.min ?? row[0];
+  const maxValue = row.max_date ?? row.max ?? row[1];
+  return {
+    minDate: parseDateValue(minValue),
+    maxDate: parseDateValue(maxValue),
+  };
+}
+
+async function fetchCount(dataset, dateExpression, start, end) {
+  const whereParts = [];
+  if (start instanceof Date) {
+    whereParts.push(`${dateExpression} >= '${formatDateForSoql(start)}'`);
+  }
+  if (end instanceof Date) {
+    whereParts.push(`${dateExpression} < '${formatDateForSoql(end)}'`);
+  }
+  const whereClause = whereParts.length ? `where ${whereParts.join(" and ")}` : "";
+  const query = `select count(*) as count ${whereClause}`;
+  const { rows } = await fetchQuery(dataset, query);
+  if (!rows.length) {
+    return 0;
+  }
+  const row = rows[0];
+  const value = row.count ?? row.value ?? row[0];
+  return Number(value) || 0;
+}
+
+async function fetchGroupCounts(dataset, dateExpression, start, end, field, limit = 8) {
+  if (!field) {
+    return [];
+  }
+  const whereParts = [
+    `${dateExpression} >= '${formatDateForSoql(start)}'`,
+    `${dateExpression} < '${formatDateForSoql(end)}'`,
+    `${field} is not null`,
+    `${field} != ''`,
+  ];
+  const query = [
+    `select ${field} as label, count(*) as count`,
+    `where ${whereParts.join(" and ")}`,
+    `group by ${field}`,
+    "order by count desc",
+    `limit ${limit}`,
+  ].join(" ");
+  const { rows } = await fetchQuery(dataset, query);
+  return rows.map((row) => ({
+    label: row.label ?? row[0],
+    count: Number(row.count ?? row[1] ?? 0) || 0,
+  }));
+}
+
+async function fetchDailyCounts(dataset, dateExpression, start, end) {
+  const query = [
+    `select date_trunc_ymd(${dateExpression}) as day, count(*) as count`,
+    `where ${dateExpression} >= '${formatDateForSoql(start)}' and ${dateExpression} < '${formatDateForSoql(end)}'`,
+    "group by day",
+    "order by day",
+  ].join(" ");
+  const { rows } = await fetchQuery(dataset, query);
+  return rows.map((row) => ({
+    day: row.day ?? row[0],
+    count: Number(row.count ?? row[1] ?? 0) || 0,
+  }));
+}
+
+function getWeekStart(date) {
+  const day = (date.getDay() + 6) % 7;
+  return addDays(startOfDay(date), -day);
+}
+
+function buildWeeklyTrend(rows, endExclusive, weeks = 26) {
+  if (!(endExclusive instanceof Date)) {
+    return [];
+  }
+  const weekCounts = new Map();
+  rows.forEach((row) => {
+    const parsed = parseDateValue(row.day ?? row[0]);
+    if (!parsed) {
+      return;
+    }
+    const weekStart = getWeekStart(parsed);
+    const key = formatDateForSoql(weekStart);
+    const current = weekCounts.get(key) || 0;
+    weekCounts.set(key, current + (Number(row.count ?? row[1] ?? 0) || 0));
+  });
+
+  const endWeekStart = getWeekStart(addDays(endExclusive, -1));
+  const startWeekStart = addDays(endWeekStart, -(weeks - 1) * 7);
+  const trend = [];
+  for (let index = 0; index < weeks; index += 1) {
+    const weekStart = addDays(startWeekStart, index * 7);
+    const key = formatDateForSoql(weekStart);
+    trend.push({
+      weekStart,
+      label: formatShortDate(weekStart),
+      count: weekCounts.get(key) || 0,
+    });
+  }
+  return trend;
+}
+
+function renderTrendChart(trend) {
+  if (!trendChart) {
+    return;
+  }
+  trendChart.innerHTML = "";
+  if (!trend.length) {
+    trendChart.innerHTML = '<div class="empty-state">No trend data available.</div>';
+    return;
+  }
+  const maxCount = Math.max(...trend.map((item) => item.count), 0);
+  trend.forEach((item) => {
+    const row = document.createElement("div");
+    row.className = "trend-row";
+
+    const label = document.createElement("span");
+    label.className = "trend-label";
+    label.textContent = item.label;
+
+    const track = document.createElement("div");
+    track.className = "trend-track";
+
+    const bar = document.createElement("div");
+    bar.className = "trend-bar";
+    const width = maxCount > 0 ? (item.count / maxCount) * 100 : 0;
+    bar.style.width = `${width}%`;
+    track.appendChild(bar);
+
+    const value = document.createElement("span");
+    value.className = "trend-value";
+    value.textContent = formatNumber(item.count);
+
+    row.append(label, track, value);
+    trendChart.appendChild(row);
+  });
+}
+
+function renderKpis(kpis) {
+  if (!kpiGrid) {
+    return;
+  }
+  kpiGrid.innerHTML = "";
+  if (!kpis.length) {
+    kpiGrid.innerHTML = '<div class="empty-state">No summary data available.</div>';
+    return;
+  }
+  kpis.forEach((kpi) => {
+    const card = document.createElement("div");
+    card.className = "kpi-card";
+
+    const label = document.createElement("div");
+    label.className = "kpi-label";
+    label.textContent = kpi.label;
+
+    const value = document.createElement("div");
+    value.className = "kpi-value";
+    value.textContent = formatNumber(kpi.value);
+
+    const meta = document.createElement("div");
+    meta.className = "kpi-meta";
+    meta.textContent = kpi.meta || "";
+
+    card.append(label, value, meta);
+    kpiGrid.appendChild(card);
+  });
+}
+
+function renderTopList(container, rows) {
+  if (!container) {
+    return;
+  }
+  container.innerHTML = "";
+  if (!rows.length) {
+    container.innerHTML = '<div class="empty-state">No data available for this range.</div>';
+    return;
+  }
+  const maxCount = Math.max(...rows.map((row) => row.count), 0);
+  rows.forEach((row) => {
+    const item = document.createElement("div");
+    item.className = "stats-item";
+
+    const label = document.createElement("div");
+    label.className = "stats-item-label";
+    const labelText = row.label ? String(row.label) : "Not specified";
+    label.textContent = truncate(labelText, 48);
+    if (labelText.length > 48) {
+      label.title = labelText;
+    }
+
+    const count = document.createElement("div");
+    count.className = "stats-item-count";
+    count.textContent = formatNumber(row.count);
+
+    const barTrack = document.createElement("div");
+    barTrack.className = "stats-item-bar";
+    const barFill = document.createElement("div");
+    barFill.className = "stats-item-fill";
+    const width = maxCount > 0 ? (row.count / maxCount) * 100 : 0;
+    barFill.style.width = `${width}%`;
+    barTrack.appendChild(barFill);
+
+    item.append(label, count, barTrack);
+    container.appendChild(item);
+  });
+}
+
+function formatChange(current, previous) {
+  if (!Number.isFinite(previous) || previous === 0) {
+    return "n/a";
+  }
+  const diff = current - previous;
+  const pct = (diff / previous) * 100;
+  const sign = diff >= 0 ? "+" : "";
+  return `${sign}${formatNumber(diff)} (${sign}${pct.toFixed(1)}%)`;
+}
+
 function getCellValue(row, column) {
   if (Array.isArray(row)) {
     return row[column.index];
@@ -664,28 +1028,148 @@ function applyFilters() {
   statsEl.textContent = `Showing ${limited.length} of ${filtered.length} rows, ${state.columns.length} columns.`;
 }
 
-async function loadData() {
-  const monthly = isMonthlyCompare();
+async function loadStats() {
   const dataset = getActiveDataset();
+  setStatus("Loading high-level stats...");
+  statsEl.textContent = "";
+
+  if (statsSub) {
+    statsSub.textContent = `${dataset.datasetName} from ${dataset.city} open data.`;
+  }
+
+  if (topCategoriesCard) {
+    topCategoriesCard.hidden = true;
+  }
+  if (topLocationsCard) {
+    topLocationsCard.hidden = true;
+  }
+  if (topAddressesCard) {
+    topAddressesCard.hidden = true;
+  }
+
+  try {
+    await ensureColumnsLoaded(dataset);
+
+    const dateExpression = getDateExpression(dataset);
+    const { minDate, maxDate } = await fetchDateRange(dataset, dateExpression);
+    const latestDay = startOfDay(maxDate || new Date());
+    const rangeEnd = addDays(latestDay, 1);
+
+    const last7Start = addDays(rangeEnd, -7);
+    const last30Start = addDays(rangeEnd, -30);
+    const prev30Start = addDays(rangeEnd, -60);
+    const prev30End = addDays(rangeEnd, -30);
+
+    const yearStart = new Date(latestDay.getFullYear(), 0, 1);
+    const dayOfYear = Math.floor((latestDay - yearStart) / (24 * 60 * 60 * 1000)) + 1;
+    const prevYearStart = new Date(latestDay.getFullYear() - 1, 0, 1);
+    const prevYearEnd = addDays(prevYearStart, dayOfYear);
+
+    const trendStart = addDays(rangeEnd, -182);
+
+    const categoryField = resolveField(dataset, dataset.categoryFields);
+    const locationField = resolveField(dataset, dataset.locationFields);
+    const addressField = resolveField(dataset, dataset.addressFields);
+
+    const [
+      last7,
+      last30,
+      prev30,
+      ytd,
+      prevYtd,
+      allTime,
+      dailyCounts,
+      categoryRows,
+      locationRows,
+      addressRows,
+    ] = await Promise.all([
+      fetchCount(dataset, dateExpression, last7Start, rangeEnd),
+      fetchCount(dataset, dateExpression, last30Start, rangeEnd),
+      fetchCount(dataset, dateExpression, prev30Start, prev30End),
+      fetchCount(dataset, dateExpression, yearStart, rangeEnd),
+      fetchCount(dataset, dateExpression, prevYearStart, prevYearEnd),
+      fetchCount(dataset, dateExpression, null, null),
+      fetchDailyCounts(dataset, dateExpression, trendStart, rangeEnd),
+      categoryField
+        ? fetchGroupCounts(dataset, dateExpression, last30Start, rangeEnd, categoryField, 8)
+        : Promise.resolve([]),
+      locationField
+        ? fetchGroupCounts(dataset, dateExpression, last30Start, rangeEnd, locationField, 8)
+        : Promise.resolve([]),
+      addressField
+        ? fetchGroupCounts(dataset, dateExpression, last30Start, rangeEnd, addressField, 10)
+        : Promise.resolve([]),
+    ]);
+
+    if (topCategoriesCard) {
+      topCategoriesCard.hidden = !categoryField;
+    }
+    if (topLocationsCard) {
+      topLocationsCard.hidden = !locationField;
+    }
+    if (topAddressesCard) {
+      topAddressesCard.hidden = !addressField;
+    }
+
+    const trend = buildWeeklyTrend(dailyCounts, rangeEnd, 26);
+    renderTrendChart(trend);
+    renderTopList(topCategories, categoryRows);
+    renderTopList(topLocations, locationRows);
+    renderTopList(topAddresses, addressRows);
+
+    const last30Change = formatChange(last30, prev30);
+    const ytdChange = formatChange(ytd, prevYtd);
+
+    renderKpis([
+      { label: "Last 7 days", value: last7, meta: "Latest week" },
+      { label: "Last 30 days", value: last30, meta: `vs prior 30 days: ${last30Change}` },
+      { label: "Year to date", value: ytd, meta: `vs prior year: ${ytdChange}` },
+      { label: "All time", value: allTime, meta: "All recorded incidents" },
+    ]);
+
+    if (dataSpan) {
+      dataSpan.textContent = minDate
+        ? `${formatDisplayDate(minDate)} → ${formatDisplayDate(latestDay)}`
+        : "—";
+    }
+
+    if (latestDate) {
+      const ageDays = Math.round((startOfDay(new Date()) - latestDay) / (24 * 60 * 60 * 1000));
+      const freshness =
+        ageDays <= 0 ? "today" : `${ageDays} day${ageDays === 1 ? "" : "s"} ago`;
+      latestDate.textContent = `${formatDisplayDate(latestDay)} (${freshness})`;
+    }
+
+    setStatus("High-level stats loaded.");
+    statsEl.textContent = `Data through ${formatDisplayDate(
+      latestDay
+    )} · Last 30 days: ${formatNumber(last30)} incidents.`;
+  } catch (error) {
+    setStatus("Unable to load high-level stats. Add an app token if the API blocks the request.", "error");
+    renderKpis([]);
+    renderTrendChart([]);
+    renderTopList(topCategories, []);
+    renderTopList(topLocations, []);
+    renderTopList(topAddresses, []);
+  }
+}
+
+async function loadData() {
+  const dataset = getActiveDataset();
+  if (isStatsView()) {
+    await loadStats();
+    return;
+  }
+
+  const monthly = isMonthlyCompare();
   setStatus(monthly ? "Loading monthly comparison..." : "Loading data...");
   statsEl.textContent = "";
 
   try {
     const query = monthly ? buildMonthlyQuery(dataset) : buildRowQuery();
-    const response = await fetch(buildUrl(dataset, query), {
-      headers: {
-        Accept: "application/json",
-      },
-    });
-
-    if (!response.ok) {
-      throw new Error(`Request failed with status ${response.status}`);
-    }
-
-    const payload = await response.json();
+    const { columns, rows } = await fetchQuery(dataset, query);
 
     if (monthly) {
-      const { rows } = normalizePayload(payload);
       const comparison = buildMonthlyComparison(rows);
       state.columns = comparison.columns;
       state.rows = comparison.rows;
@@ -707,7 +1191,6 @@ async function loadData() {
       return;
     }
 
-    const { columns, rows } = normalizePayload(payload);
     state.columns = columns;
     state.rows = rows;
 
