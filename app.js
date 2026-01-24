@@ -15,6 +15,11 @@ const DATASETS = [
     categoryFields: ["crime_type", "category_description", "ucr_category"],
     locationFields: ["location_type"],
     addressFields: [],
+    geoField: null,
+    latField: null,
+    lonField: null,
+    mapCenter: null,
+    mapZoom: null,
   },
   {
     id: "dallas",
@@ -33,6 +38,11 @@ const DATASETS = [
     categoryFields: ["offincident", "signal", "offense"],
     locationFields: ["premise", "location_type", "type_location"],
     addressFields: ["incident_address", "address"],
+    geoField: "geocoded_column",
+    latField: null,
+    lonField: null,
+    mapCenter: [32.7767, -96.797],
+    mapZoom: 10,
   },
   {
     id: "chicago",
@@ -50,6 +60,11 @@ const DATASETS = [
     categoryFields: ["primary_type", "description", "iucr"],
     locationFields: ["location_description"],
     addressFields: ["block"],
+    geoField: "location",
+    latField: "latitude",
+    lonField: "longitude",
+    mapCenter: [41.8781, -87.6298],
+    mapZoom: 10,
   },
 ];
 
@@ -82,6 +97,10 @@ const topAddresses = document.getElementById("topAddresses");
 const topCategoriesCard = document.getElementById("topCategoriesCard");
 const topLocationsCard = document.getElementById("topLocationsCard");
 const topAddressesCard = document.getElementById("topAddressesCard");
+const mapCard = document.getElementById("mapCard");
+const mapContainer = document.getElementById("map");
+const mapEmpty = document.getElementById("mapEmpty");
+const mapSub = document.getElementById("mapSub");
 const chartSection = document.getElementById("chartSection");
 const chartWrapper = document.getElementById("chartWrapper");
 const datasetTabs = document.getElementById("datasetTabs");
@@ -122,6 +141,9 @@ const state = {
   rows: [],
   activeDatasetId: null,
 };
+
+let mapInstance = null;
+let mapMarkers = null;
 
 const LEGACY_FALLBACK_TOKENS = {
   austin: typeof window.AUSTIN_APP_TOKEN === "string" ? window.AUSTIN_APP_TOKEN.trim() : "",
@@ -321,6 +343,9 @@ function updateViewMode() {
   }
   if (tableCard) {
     tableCard.hidden = !rowsView;
+  }
+  if (statsView && mapInstance) {
+    setTimeout(() => mapInstance.invalidateSize(), 50);
   }
 }
 
@@ -918,6 +943,197 @@ function formatChange(current, previous) {
   return `${sign}${formatNumber(diff)} (${sign}${pct.toFixed(1)}%)`;
 }
 
+function hasGeoSupport(dataset) {
+  return Boolean(dataset.geoField || (dataset.latField && dataset.lonField));
+}
+
+function setMapMessage(message) {
+  if (mapEmpty) {
+    mapEmpty.textContent = message || "";
+    mapEmpty.hidden = !message;
+  }
+}
+
+function ensureMap(dataset) {
+  if (!mapContainer || typeof window.L === "undefined") {
+    return null;
+  }
+  if (!mapInstance) {
+    mapInstance = window.L.map(mapContainer, { zoomControl: true, attributionControl: true });
+    window.L
+      .tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+        attribution: "&copy; OpenStreetMap contributors",
+      })
+      .addTo(mapInstance);
+    mapMarkers = window.L.layerGroup().addTo(mapInstance);
+  }
+
+  if (dataset?.mapCenter) {
+    mapInstance.setView(dataset.mapCenter, dataset.mapZoom || 10);
+  }
+  return mapInstance;
+}
+
+function toNumber(value) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+function parseCoordinatePair(text) {
+  if (!text) {
+    return null;
+  }
+  const match = String(text).match(/(-?\d+\.\d+)[,\s]+(-?\d+\.\d+)/);
+  if (!match) {
+    return null;
+  }
+  const a = Number(match[1]);
+  const b = Number(match[2]);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) {
+    return null;
+  }
+  if (Math.abs(a) > 90 || String(text).toUpperCase().includes("POINT")) {
+    return { lat: b, lon: a };
+  }
+  return { lat: a, lon: b };
+}
+
+function extractLatLng(row, dataset) {
+  if (!row) {
+    return null;
+  }
+
+  if (dataset.latField && dataset.lonField) {
+    const lat = toNumber(row[dataset.latField] ?? row.lat ?? row.latitude);
+    const lon = toNumber(row[dataset.lonField] ?? row.lon ?? row.longitude);
+    if (lat !== null && lon !== null) {
+      return { lat, lon };
+    }
+  }
+
+  if (dataset.geoField) {
+    let value = row[dataset.geoField] ?? row.location ?? row.geo;
+    if (!value && Array.isArray(row)) {
+      value = row[0];
+    }
+    if (typeof value === "string") {
+      const pair = parseCoordinatePair(value);
+      if (pair) {
+        return pair;
+      }
+      try {
+        value = JSON.parse(value);
+      } catch (error) {
+        value = null;
+      }
+    }
+    if (value && typeof value === "object") {
+      const lat = toNumber(value.latitude ?? value.lat ?? value.y);
+      const lon = toNumber(value.longitude ?? value.lon ?? value.lng ?? value.x);
+      if (lat !== null && lon !== null) {
+        return { lat, lon };
+      }
+      if (Array.isArray(value.coordinates) && value.coordinates.length >= 2) {
+        const lonValue = toNumber(value.coordinates[0]);
+        const latValue = toNumber(value.coordinates[1]);
+        if (latValue !== null && lonValue !== null) {
+          return { lat: latValue, lon: lonValue };
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+async function fetchMapPoints(dataset, dateExpression, start, end, limit = 800) {
+  if (!hasGeoSupport(dataset)) {
+    return [];
+  }
+
+  const whereParts = [
+    `${dateExpression} >= '${formatDateForSoql(start)}'`,
+    `${dateExpression} < '${formatDateForSoql(end)}'`,
+  ];
+
+  let query = "";
+  if (dataset.latField && dataset.lonField) {
+    whereParts.push(`${dataset.latField} is not null`);
+    whereParts.push(`${dataset.lonField} is not null`);
+    query = [
+      `select ${dataset.latField} as latitude, ${dataset.lonField} as longitude`,
+      `where ${whereParts.join(" and ")}`,
+      `limit ${limit}`,
+    ].join(" ");
+  } else if (dataset.geoField) {
+    whereParts.push(`${dataset.geoField} is not null`);
+    query = [
+      `select ${dataset.geoField} as location`,
+      `where ${whereParts.join(" and ")}`,
+      `limit ${limit}`,
+    ].join(" ");
+  }
+
+  if (!query) {
+    return [];
+  }
+
+  const { rows } = await fetchQuery(dataset, query);
+  return rows
+    .map((row) => extractLatLng(row, dataset))
+    .filter((point) => point && Number.isFinite(point.lat) && Number.isFinite(point.lon));
+}
+
+function renderMap(points, dataset) {
+  if (!mapCard) {
+    return;
+  }
+
+  if (!hasGeoSupport(dataset)) {
+    mapCard.hidden = true;
+    setMapMessage("This dataset does not include location coordinates.");
+    return;
+  }
+
+  mapCard.hidden = false;
+  const map = ensureMap(dataset);
+  if (!map) {
+    setMapMessage("Map failed to load.");
+    return;
+  }
+
+  if (!mapMarkers) {
+    mapMarkers = window.L.layerGroup().addTo(map);
+  } else {
+    mapMarkers.clearLayers();
+  }
+
+  if (!points.length) {
+    setMapMessage("No mapped incidents found for the last 30 days.");
+    if (dataset.mapCenter) {
+      map.setView(dataset.mapCenter, dataset.mapZoom || 10);
+    }
+    setTimeout(() => map.invalidateSize(), 50);
+    return;
+  }
+
+  setMapMessage(`Plotted ${formatNumber(points.length)} incidents in the last 30 days.`);
+  points.forEach((point) => {
+    window.L.circleMarker([point.lat, point.lon], {
+      radius: 4,
+      weight: 1,
+      color: "#0f766e",
+      fillColor: "#0f766e",
+      fillOpacity: 0.5,
+    }).addTo(mapMarkers);
+  });
+
+  const bounds = window.L.latLngBounds(points.map((point) => [point.lat, point.lon]));
+  map.fitBounds(bounds, { padding: [24, 24] });
+  setTimeout(() => map.invalidateSize(), 50);
+}
+
 function getCellValue(row, column) {
   if (Array.isArray(row)) {
     return row[column.index];
@@ -1046,6 +1262,13 @@ async function loadStats() {
   if (topAddressesCard) {
     topAddressesCard.hidden = true;
   }
+  if (mapCard) {
+    mapCard.hidden = !hasGeoSupport(dataset);
+  }
+  setMapMessage(hasGeoSupport(dataset) ? "Loading map..." : "This dataset does not include location coordinates.");
+  if (mapMarkers) {
+    mapMarkers.clearLayers();
+  }
 
   try {
     await ensureColumnsLoaded(dataset);
@@ -1071,6 +1294,12 @@ async function loadStats() {
     const locationField = resolveField(dataset, dataset.locationFields);
     const addressField = resolveField(dataset, dataset.addressFields);
 
+    if (mapSub) {
+      mapSub.textContent = `Last 30 days: ${formatDisplayDate(last30Start)} → ${formatDisplayDate(
+        latestDay
+      )}`;
+    }
+
     const [
       last7,
       last30,
@@ -1082,6 +1311,7 @@ async function loadStats() {
       categoryRows,
       locationRows,
       addressRows,
+      mapPoints,
     ] = await Promise.all([
       fetchCount(dataset, dateExpression, last7Start, rangeEnd),
       fetchCount(dataset, dateExpression, last30Start, rangeEnd),
@@ -1098,6 +1328,9 @@ async function loadStats() {
         : Promise.resolve([]),
       addressField
         ? fetchGroupCounts(dataset, dateExpression, last30Start, rangeEnd, addressField, 10)
+        : Promise.resolve([]),
+      hasGeoSupport(dataset)
+        ? fetchMapPoints(dataset, dateExpression, last30Start, rangeEnd, 900)
         : Promise.resolve([]),
     ]);
 
@@ -1116,6 +1349,7 @@ async function loadStats() {
     renderTopList(topCategories, categoryRows);
     renderTopList(topLocations, locationRows);
     renderTopList(topAddresses, addressRows);
+    renderMap(mapPoints, dataset);
 
     const last30Change = formatChange(last30, prev30);
     const ytdChange = formatChange(ytd, prevYtd);
@@ -1151,6 +1385,10 @@ async function loadStats() {
     renderTopList(topCategories, []);
     renderTopList(topLocations, []);
     renderTopList(topAddresses, []);
+    setMapMessage("Map unavailable due to an API error.");
+    if (mapMarkers) {
+      mapMarkers.clearLayers();
+    }
   }
 }
 
